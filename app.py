@@ -1,70 +1,65 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
-import sqlite3
-import hashlib
-import numpy as np
+import streamlit as st
+import requests
 
-app = FastAPI()
+API_URL = "http://127.0.0.1:8002"
 
-class User(BaseModel):
-    username: str
-    password: str
+st.title("🗂 Digital Task Management")
 
-class Task(BaseModel):
-    title: str
-    start_time: str
-    end_time: str
-    user: str
+if "username" not in st.session_state:
+    st.session_state["username"] = None
 
-def get_db_connection():
-    conn = sqlite3.connect("tasks.db")
-    conn.row_factory = sqlite3.Row
-    return conn
+menu = ["Login", "Register", "My Tasks"]
+choice = st.sidebar.selectbox("Menu", menu)
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+if choice == "Register":
+    st.subheader("Create Account")
+    username = st.text_input("Username", key="reg_user")
+    password = st.text_input("Password", type="password", key="reg_pass")
+    if st.button("Register"):
+        res = requests.post(f"{API_URL}/auth/register", json={"username": username, "password": password})
+        if res.status_code == 200:
+            st.success("Account created!")
+        else:
+            st.error(res.json().get("detail"))
 
-@app.post("/register")
-def register(user: User):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("INSERT INTO users (username, password) VALUES (?, ?)",
-                    (user.username, hash_password(user.password)))
-        conn.commit()
-        return {"message": "User registered!"}
-    except:
-        raise HTTPException(status_code=400, detail="Username already exists")
-    finally:
-        conn.close()
+elif choice == "Login":
+    st.subheader("Login")
+    username = st.text_input("Username", key="login_user")
+    password = st.text_input("Password", type="password", key="login_pass")
+    if st.button("Login"):
+        res = requests.post(f"{API_URL}/auth/login", json={"username": username, "password": password})
+        if res.status_code == 200:
+            st.session_state["username"] = username
+            st.success("Logged in successfully!")
+        else:
+            st.error(res.json().get("detail"))
 
-@app.post("/login")
-def login(user: User):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE username=? AND password=?",
-                (user.username, hash_password(user.password)))
-    result = cur.fetchone()
-    conn.close()
-    if result:
-        return {"message": "Login successful!"}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+elif choice == "My Tasks":
+    if st.session_state["username"] is None:
+        st.warning("You must login first.")
+    else:
+        st.subheader("Your Tasks")
+        res = requests.get(f"{API_URL}/tasks/", params={"username": st.session_state['username']})
+        if res.status_code == 200:
+            tasks = res.json()
+            for t in tasks:
+                st.write(f"{t['title']} — {t['start_time']} → {t['end_time']}")
+        else:
+            st.error("Error fetching tasks")
 
-@app.post("/tasks")
-def add_task(task: Task):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM users WHERE username=?", (task.user,))
-    user = cur.fetchone()
-    if not user:
-        conn.close()
-        raise HTTPException(status_code=404, detail="User not found")
-    user_id = user["id"]
-    cur.execute(
-        "INSERT INTO tasks (user_id, title, start_time, end_time) VALUES (?, ?, ?, ?)",
-        (user_id, task.title, task.start_time, task.end_time)
-    )
-    conn.commit()
-    conn.close()
-    return {"message": "Task added!"}
+        title = st.text_input("New task", key="task_title")
+        start = st.text_input("Start time (YYYY-MM-DD HH:MM:SS)", key="task_start")
+        end = st.text_input("End time (YYYY-MM-DD HH:MM:SS)", key="task_end")
+        if st.button("Add Task"):
+            data = {
+                "username": st.session_state["username"],
+                "title": title,
+                "start_time": start,
+                "end_time": end
+            }
+            res = requests.post(f"{API_URL}/tasks/", json=data)
+            if res.status_code == 200:
+                st.success("Task added!")
+            else:
+                st.error("Error adding task")
+
